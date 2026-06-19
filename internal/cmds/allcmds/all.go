@@ -1,0 +1,58 @@
+// Package allcmds blank-imports every gortk command package so that each one's
+// init() runs and self-registers with the registry. main imports this package.
+//
+// This file is the single place that lists command packages; regenerate it as
+// new command modules are added. Keeping registration here (rather than in main)
+// means command packages never need to know about each other.
+package allcmds
+
+import (
+	_ "gortk/internal/cmds/aws"
+	_ "gortk/internal/cmds/cargo"
+	_ "gortk/internal/cmds/container"
+	_ "gortk/internal/cmds/curl"
+	_ "gortk/internal/cmds/deps"
+	_ "gortk/internal/cmds/dotnet"
+	_ "gortk/internal/cmds/envcmd"
+	_ "gortk/internal/cmds/execwrap"
+	_ "gortk/internal/cmds/find"
+	_ "gortk/internal/cmds/format"
+	_ "gortk/internal/cmds/gh"
+	_ "gortk/internal/cmds/git"
+	_ "gortk/internal/cmds/glab"
+	_ "gortk/internal/cmds/gocmd"
+	_ "gortk/internal/cmds/golangci"
+	_ "gortk/internal/cmds/gradlew"
+	_ "gortk/internal/cmds/grep"
+	_ "gortk/internal/cmds/gt"
+	_ "gortk/internal/cmds/hooks"
+	_ "gortk/internal/cmds/jsoncmd"
+	_ "gortk/internal/cmds/lint"
+	_ "gortk/internal/cmds/logcmd"
+	_ "gortk/internal/cmds/ls"
+	_ "gortk/internal/cmds/meta"
+	_ "gortk/internal/cmds/mvn"
+	_ "gortk/internal/cmds/mypy"
+	_ "gortk/internal/cmds/next"
+	_ "gortk/internal/cmds/npm"
+	_ "gortk/internal/cmds/pip"
+	_ "gortk/internal/cmds/pipe"
+	_ "gortk/internal/cmds/playwright"
+	_ "gortk/internal/cmds/pnpm"
+	_ "gortk/internal/cmds/prettier"
+	_ "gortk/internal/cmds/prisma"
+	_ "gortk/internal/cmds/psql"
+	_ "gortk/internal/cmds/pytest"
+	_ "gortk/internal/cmds/rake"
+	_ "gortk/internal/cmds/readcmd"
+	_ "gortk/internal/cmds/rspec"
+	_ "gortk/internal/cmds/rubocop"
+	_ "gortk/internal/cmds/ruff"
+	_ "gortk/internal/cmds/smart"
+	_ "gortk/internal/cmds/summary"
+	_ "gortk/internal/cmds/tree"
+	_ "gortk/internal/cmds/tsc"
+	_ "gortk/internal/cmds/vitest"
+	_ "gortk/internal/cmds/wc"
+	_ "gortk/internal/cmds/wget"
+)
