@@ -49,15 +49,28 @@ wraps a native tool, captures its output, and compresses it before printing.
   `pip`, `playwright`.
 - **Cloud / containers:** `aws`, `docker`/`kubectl`/`oc`, `curl`, `wget`, `psql`.
 - **Generic exec:** `err`, `test`, `proxy`, `run`, `summary`, `pipe`.
-- **Hooks / integration:** `rewrite`, `hook` (Claude Code PreToolUse, native
-  Windows), `init` (Windows-native Claude Code installer with `--show`/
-  `--dry-run`). Compound commands (`&&`/`||`/`;`/`|`) are rewritten per-segment;
-  unattestable constructs (substitutions, heredocs, file redirects) pass through.
+- **Hooks / integration:** `rewrite`; `hook` for **Claude Code** (PreToolUse) and
+  **GitHub Copilot** (`hook copilot` auto-detects VS Code Copilot Chat
+  `updatedInput` and Copilot CLI `modifiedArgs`); `init` (global Windows-native
+  Claude installer) and `init --copilot` (project-scoped `.github/` installer
+  writing `hooks/gortk-rewrite.json` + `copilot-instructions.md`); all with
+  `--show`/`--dry-run`. Compound commands (`&&`/`||`/`;`/`|`) are rewritten
+  per-segment; unattestable constructs (substitutions, heredocs, file redirects)
+  pass through.
 - **Operational:** `config`, `gain` (token-savings report from the JSON tracker),
   `verify` (runs all 58 builtin filters' inline tests — 144/144 pass).
 
 Anything without a dedicated module is handled by the declarative TOML filter
 engine (58 builtin filters) and otherwise passed through unchanged.
+
+### Agent integration
+
+- **[docs/INTEGRATION.md](docs/INTEGRATION.md)** — hand-it-to-an-LLM guide for
+  wiring gortk into Claude Code, Codex, and Copilot across machines: the full
+  command list, per-agent setup + validation, and the instruction block that
+  stops agents bypassing the optimizer via their built-in `Read`/`Grep`/`Glob`
+  tools. Codex is instruction-only (no rewrite hook exists); Claude and Copilot
+  have native hooks.
 
 ### Removed vs rtk (intentional)
 

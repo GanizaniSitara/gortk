@@ -39,6 +39,11 @@ gortk <anything>    # passthrough if no filter applies
 and `gortk hook claude` / `gortk init` wire it into an LLM coding agent's
 pre-tool hook so wrapping happens automatically.
 
+See **[docs/INTEGRATION.md](docs/INTEGRATION.md)** for a hand-it-to-an-LLM guide
+to wiring gortk into **Claude Code, Codex, and Copilot** across machines —
+including the full command list, validation steps, and how to stop agents
+bypassing the optimizer with their built-in `Read`/`Grep`/`Glob` tools.
+
 ## Build
 
 Requires Go 1.23+.

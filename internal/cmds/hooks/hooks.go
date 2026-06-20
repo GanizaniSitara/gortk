@@ -68,7 +68,7 @@ func init() {
 	})
 	registry.Register(&registry.Cmd{
 		Name:    "hook",
-		Summary: "Agent hook processors (subcommand: claude) — reads JSON from stdin",
+		Summary: "Agent hook processors (subcommands: claude, copilot) — reads JSON from stdin",
 		Run:     RunHook,
 	})
 	registry.Register(&registry.Cmd{
@@ -808,18 +808,22 @@ func RunRewrite(args []string, verbose int) (int, error) {
 
 // ── command: hook ─────────────────────────────────────────────────────
 
-// RunHook dispatches the `hook` subcommands. Only "claude" is implemented; other
-// agents are out of scope for this Windows/Claude-Code port.
+// RunHook dispatches the `hook` subcommands. "claude" handles the Claude Code
+// PreToolUse hook; "copilot" handles the GitHub Copilot preToolUse hook (VS Code
+// Copilot Chat + Copilot CLI, auto-detected). Other agents are out of scope for
+// this Windows port.
 func RunHook(args []string, verbose int) (int, error) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gortk hook: missing subcommand (expected: claude)")
+		fmt.Fprintln(os.Stderr, "gortk hook: missing subcommand (expected: claude or copilot)")
 		return 2, nil
 	}
 	switch args[0] {
 	case "claude":
 		return runHookClaude(os.Stdin, os.Stdout, gortkSupports)
+	case "copilot":
+		return runHookCopilot(os.Stdin, os.Stdout, gortkSupports)
 	default:
-		fmt.Fprintf(os.Stderr, "gortk hook: unknown subcommand %q (expected: claude)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gortk hook: unknown subcommand %q (expected: claude or copilot)\n", args[0])
 		return 2, nil
 	}
 }
