@@ -67,18 +67,24 @@ type installPlan struct {
 	settingsErr    string // non-empty if settings.json exists but failed to parse
 }
 
-// RunInit implements `gortk init [--copilot] [--show] [--dry-run]`. With no
-// target flag it installs the global Claude Code hook (the original behaviour,
-// unchanged). With --copilot it routes to the project-scoped GitHub Copilot
-// installer instead (writes into ./.github of the current directory).
+// RunInit implements `gortk init [--copilot [--global]] [--show] [--dry-run]`.
+// With no target flag it installs the global Claude Code hook (the original
+// behaviour, unchanged). With --copilot it routes to the project-scoped GitHub
+// Copilot installer (writes into ./.github of the current directory); adding
+// --global instead performs a USER-LEVEL Copilot install that wires gortk into
+// the Copilot CLI once per user, covering all repos (writes into the user's
+// Copilot settings.json).
 func RunInit(args []string, verbose int) (int, error) {
 	show := false
 	dryRun := false
 	copilot := false
+	global := false
 	for _, a := range args {
 		switch a {
 		case "--copilot":
 			copilot = true
+		case "--global":
+			global = true
 		case "--show":
 			show = true
 		case "--dry-run":
@@ -93,7 +99,16 @@ func RunInit(args []string, verbose int) (int, error) {
 		}
 	}
 
+	if global && !copilot {
+		fmt.Fprintln(os.Stderr, "gortk init: --global is only valid together with --copilot")
+		printInitUsage()
+		return 2, nil
+	}
+
 	if copilot {
+		if global {
+			return runCopilotGlobalInit(show, dryRun, verbose)
+		}
 		return runCopilotInit(show, dryRun, verbose)
 	}
 
@@ -370,9 +385,10 @@ func existsLabel(b bool, yes, no string) string {
 }
 
 func printInitUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: gortk init [--copilot] [--show] [--dry-run]")
+	fmt.Fprintln(os.Stderr, "Usage: gortk init [--copilot [--global]] [--show] [--dry-run]")
 	fmt.Fprintln(os.Stderr, "  Installs the gortk PreToolUse hook into Claude Code (~/.claude).")
-	fmt.Fprintln(os.Stderr, "  --copilot  install the project-scoped GitHub Copilot hook into ./.github instead")
-	fmt.Fprintln(os.Stderr, "  --show     print resolved paths and current state; write nothing")
-	fmt.Fprintln(os.Stderr, "  --dry-run  print the changes that would be made; write nothing")
+	fmt.Fprintln(os.Stderr, "  --copilot           install the project-scoped GitHub Copilot hook into ./.github instead")
+	fmt.Fprintln(os.Stderr, "  --copilot --global  install the user-level Copilot CLI hook for ALL repos (~/.copilot/settings.json)")
+	fmt.Fprintln(os.Stderr, "  --show              print resolved paths and current state; write nothing")
+	fmt.Fprintln(os.Stderr, "  --dry-run           print the changes that would be made; write nothing")
 }

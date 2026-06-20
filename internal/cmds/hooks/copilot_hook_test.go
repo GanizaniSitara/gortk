@@ -471,3 +471,270 @@ func TestRunInitCopilotRoutesToProjectScope(t *testing.T) {
 		t.Errorf("dry-run via RunInit created ./.github (err=%v)", err)
 	}
 }
+
+// ── Copilot installer (user-level / global ~/.copilot/settings.json) ──
+
+// copilotGlobalHome returns a temp user home for the global installer, with
+// COPILOT_HOME explicitly unset so resolution falls through to <home>/.copilot.
+// Returns (home, settingsPath).
+func copilotGlobalHome(t *testing.T) (string, string) {
+	t.Helper()
+	t.Setenv(copilotHomeEnv, "") // force <home>/.copilot resolution
+	home := t.TempDir()
+	return home, filepath.Join(home, copilotHomeDir, copilotSettingsFile)
+}
+
+// readJSON reads and unmarshals a JSON file into a generic map.
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("%s is not valid JSON: %v\n%s", path, err, data)
+	}
+	return m
+}
+
+// copilotPreToolUseArray pulls hooks.preToolUse out of a parsed settings map.
+func copilotPreToolUseArray(t *testing.T, root map[string]any) []any {
+	t.Helper()
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings missing hooks object: %v", root)
+	}
+	arr, ok := hooks["preToolUse"].([]any)
+	if !ok {
+		t.Fatalf("hooks missing preToolUse array: %v", hooks)
+	}
+	return arr
+}
+
+func TestCopilotGlobalInstallCreatesSettings(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+
+	if code, err := runCopilotGlobalInitAt(home, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("install code=%d err=%v", code, err)
+	}
+
+	root := readJSON(t, settingsPath)
+	arr := copilotPreToolUseArray(t, root)
+	if len(arr) != 1 {
+		t.Fatalf("expected exactly 1 preToolUse entry, got %d: %v", len(arr), arr)
+	}
+	entry, ok := arr[0].(map[string]any)
+	if !ok {
+		t.Fatalf("preToolUse entry is not an object: %v", arr[0])
+	}
+	if entry["type"] != "command" {
+		t.Errorf("entry.type = %v, want \"command\"", entry["type"])
+	}
+	if entry["bash"] != "gortk hook copilot" {
+		t.Errorf("entry.bash = %v, want %q", entry["bash"], "gortk hook copilot")
+	}
+	if entry["powershell"] != "gortk hook copilot" {
+		t.Errorf("entry.powershell = %v, want %q", entry["powershell"], "gortk hook copilot")
+	}
+	if entry["cwd"] != "." {
+		t.Errorf("entry.cwd = %v, want \".\"", entry["cwd"])
+	}
+	// timeoutSec round-trips through JSON as a float64.
+	if entry["timeoutSec"] != float64(5) {
+		t.Errorf("entry.timeoutSec = %v, want 5", entry["timeoutSec"])
+	}
+	// No backup should exist for a freshly created file.
+	if _, err := os.Stat(settingsPath + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("backup should not exist for a newly created settings file (err=%v)", err)
+	}
+}
+
+func TestCopilotGlobalInstallPreservesExistingKeys(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing settings with unrelated keys AND an unrelated hook event.
+	pre := map[string]any{
+		"theme":  "dark",
+		"model":  "gpt-4",
+		"nested": map[string]any{"keep": true},
+		"hooks":  map[string]any{"postToolUse": []any{map[string]any{"type": "command", "bash": "echo done"}}},
+	}
+	preBytes, _ := json.MarshalIndent(pre, "", "  ")
+	if err := os.WriteFile(settingsPath, preBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, err := runCopilotGlobalInitAt(home, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("install code=%d err=%v", code, err)
+	}
+
+	root := readJSON(t, settingsPath)
+	if root["theme"] != "dark" {
+		t.Errorf("theme not preserved: %v", root["theme"])
+	}
+	if root["model"] != "gpt-4" {
+		t.Errorf("model not preserved: %v", root["model"])
+	}
+	nested, _ := root["nested"].(map[string]any)
+	if nested == nil || nested["keep"] != true {
+		t.Errorf("nested key not preserved: %v", root["nested"])
+	}
+	// The unrelated postToolUse hook must survive alongside the new preToolUse.
+	hooks := root["hooks"].(map[string]any)
+	if _, ok := hooks["postToolUse"].([]any); !ok {
+		t.Errorf("postToolUse hook event dropped: %v", hooks)
+	}
+	arr := copilotPreToolUseArray(t, root)
+	if len(arr) != 1 {
+		t.Errorf("expected 1 preToolUse entry, got %d", len(arr))
+	}
+	// A backup of the pre-existing file must exist.
+	if _, err := os.Stat(settingsPath + ".bak"); err != nil {
+		t.Errorf("backup not created for pre-existing settings: %v", err)
+	}
+}
+
+func TestCopilotGlobalInstallIdempotent(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+
+	if code, err := runCopilotGlobalInitAt(home, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("first install code=%d err=%v", code, err)
+	}
+	first, _ := os.ReadFile(settingsPath)
+
+	if code, err := runCopilotGlobalInitAt(home, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("second install code=%d err=%v", code, err)
+	}
+	second, _ := os.ReadFile(settingsPath)
+
+	if string(first) != string(second) {
+		t.Errorf("settings changed on re-install:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	root := readJSON(t, settingsPath)
+	arr := copilotPreToolUseArray(t, root)
+	if len(arr) != 1 {
+		t.Errorf("expected exactly 1 preToolUse entry after re-install, got %d", len(arr))
+	}
+}
+
+func TestCopilotGlobalInstallIdempotentManualEdit(t *testing.T) {
+	// A hand-written entry that invokes gortk (only powershell, different cwd)
+	// must be detected as present — no duplicate appended.
+	home, settingsPath := copilotGlobalHome(t)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manual := map[string]any{
+		"hooks": map[string]any{
+			"preToolUse": []any{
+				map[string]any{"type": "command", "powershell": "gortk hook copilot", "cwd": "/somewhere"},
+			},
+		},
+	}
+	mb, _ := json.MarshalIndent(manual, "", "  ")
+	if err := os.WriteFile(settingsPath, mb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, err := runCopilotGlobalInitAt(home, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("install code=%d err=%v", code, err)
+	}
+	root := readJSON(t, settingsPath)
+	arr := copilotPreToolUseArray(t, root)
+	if len(arr) != 1 {
+		t.Errorf("manual gortk entry should be detected; expected 1 entry, got %d: %v", len(arr), arr)
+	}
+}
+
+func TestCopilotGlobalInstallRefusesInvalidJSON(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := []byte("{ this is not valid json")
+	if err := os.WriteFile(settingsPath, bad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := runCopilotGlobalInitAt(home, false, false, 0)
+	if err == nil || code == 0 {
+		t.Fatalf("install should refuse invalid JSON (code=%d err=%v)", code, err)
+	}
+	// The bad file must be untouched and no backup written.
+	got, _ := os.ReadFile(settingsPath)
+	if string(got) != string(bad) {
+		t.Errorf("invalid settings.json was modified: %q", string(got))
+	}
+	if _, err := os.Stat(settingsPath + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("backup should not be written when JSON is invalid (err=%v)", err)
+	}
+}
+
+func TestCopilotGlobalDryRunWritesNothing(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+	if code, err := runCopilotGlobalInitAt(home, false, true, 0); err != nil || code != 0 {
+		t.Fatalf("dry-run code=%d err=%v", code, err)
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Errorf("dry-run created settings.json (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Dir(settingsPath)); !os.IsNotExist(err) {
+		t.Errorf("dry-run created ~/.copilot dir (err=%v)", err)
+	}
+}
+
+func TestCopilotGlobalShowWritesNothing(t *testing.T) {
+	home, settingsPath := copilotGlobalHome(t)
+	if code, err := runCopilotGlobalInitAt(home, true, false, 0); err != nil || code != 0 {
+		t.Fatalf("--show code=%d err=%v", code, err)
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Errorf("--show created settings.json (err=%v)", err)
+	}
+}
+
+func TestCopilotGlobalRespectsCopilotHomeEnv(t *testing.T) {
+	// COPILOT_HOME, when set, overrides <home>/.copilot.
+	copilotHome := t.TempDir()
+	t.Setenv(copilotHomeEnv, copilotHome)
+	// A separate (wrong) home that must NOT be used.
+	otherHome := t.TempDir()
+
+	if code, err := runCopilotGlobalInitAt(otherHome, false, false, 0); err != nil || code != 0 {
+		t.Fatalf("install code=%d err=%v", code, err)
+	}
+	// settings.json lands directly under COPILOT_HOME, not under otherHome/.copilot.
+	wantPath := filepath.Join(copilotHome, copilotSettingsFile)
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("settings.json not written to COPILOT_HOME: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(otherHome, copilotHomeDir, copilotSettingsFile)); !os.IsNotExist(err) {
+		t.Errorf("settings.json wrongly written under home/.copilot despite COPILOT_HOME (err=%v)", err)
+	}
+}
+
+func TestRunInitCopilotGlobalRouting(t *testing.T) {
+	// `gortk init --copilot --global --dry-run` must route to the global path and
+	// write nothing.
+	home, settingsPath := copilotGlobalHome(t)
+	t.Setenv("HOME", home)        // POSIX home (no effect on Windows but harmless)
+	t.Setenv("USERPROFILE", home) // Windows home seam for os.UserHomeDir()
+	code, err := RunInit([]string{"--copilot", "--global", "--dry-run"}, 0)
+	if err != nil || code != 0 {
+		t.Fatalf("RunInit --copilot --global --dry-run code=%d err=%v", code, err)
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Errorf("dry-run via RunInit created settings.json (err=%v)", err)
+	}
+}
+
+func TestRunInitGlobalRequiresCopilot(t *testing.T) {
+	// --global without --copilot is rejected (exit 2) and writes nothing.
+	code, err := RunInit([]string{"--global", "--dry-run"}, 0)
+	if code != 2 {
+		t.Errorf("expected exit 2 for --global without --copilot, got code=%d err=%v", code, err)
+	}
+}
