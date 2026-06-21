@@ -76,6 +76,27 @@ func startErr(err error) error {
 	return err
 }
 
+// trackFiltered records a filtered git subcommand execution: the raw captured
+// output vs. the compacted form gortk emitted. command is "git <sub> <args>"
+// and label is "gortk git <sub>", mirroring core.RunFiltered's convention.
+// Best-effort — never affects output or exit codes.
+func trackFiltered(timer core.TimedExecution, sub string, args []string, raw, filtered string) {
+	timer.Track(gitCommandLabel(sub, args), "gortk git "+sub, raw, filtered)
+}
+
+// trackPassthrough records a raw-exec git subcommand (no filtering applied).
+func trackPassthrough(timer core.TimedExecution, sub string, args []string) {
+	timer.TrackPassthrough(gitCommandLabel(sub, args), "gortk git "+sub)
+}
+
+// gitCommandLabel builds the "git <sub> <args>" command string for tracking.
+func gitCommandLabel(sub string, args []string) string {
+	if len(args) == 0 {
+		return "git " + sub
+	}
+	return "git " + sub + " " + strings.Join(args, " ")
+}
+
 // gitCmd builds a git Command with global options (e.g. -C, -c, --git-dir,
 // --work-tree) prepended before any subcommand arguments.
 func gitCmd(globalArgs []string, args ...string) *exec.Cmd {
@@ -332,6 +353,8 @@ func runDiff(args []string, maxLines, verbose int, globalArgs []string) (int, er
 	// not pre-parse the diff args through a clap layer, so the tokens arrive
 	// intact; no restoration is needed.
 
+	timer := core.StartTimer()
+
 	wantsStat := false
 	wantsNoCompact := false
 	for _, arg := range args {
@@ -358,9 +381,12 @@ func runDiff(args []string, maxLines, verbose int, globalArgs []string) (int, er
 		}
 		if !res.success() {
 			fmt.Fprintln(os.Stderr, res.stderr)
+			trackPassthrough(timer, "diff", args)
 			return res.exitCode, nil
 		}
-		fmt.Println(strings.TrimSpace(res.stdout))
+		out := strings.TrimSpace(res.stdout)
+		fmt.Println(out)
+		trackFiltered(timer, "diff", args, res.stdout, out)
 		return 0, nil
 	}
 
@@ -374,6 +400,7 @@ func runDiff(args []string, maxLines, verbose int, globalArgs []string) (int, er
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprint(os.Stderr, res.stderr)
 		}
+		trackPassthrough(timer, "diff", args)
 		return res.exitCode, nil
 	}
 
@@ -381,24 +408,31 @@ func runDiff(args []string, maxLines, verbose int, globalArgs []string) (int, er
 		fmt.Fprintln(os.Stderr, "Git diff summary:")
 	}
 
-	fmt.Println(strings.TrimSpace(res.stdout))
+	statOut := strings.TrimSpace(res.stdout)
+	fmt.Println(statOut)
 
 	diffArgs := append([]string{"diff"}, args...)
 	diffRes := execCapture(gitCmd(globalArgs, diffArgs...))
 	if diffRes.startErr != nil {
 		return 127, fmt.Errorf("gortk: failed to run git: %w", diffRes.startErr)
 	}
+	compacted := ""
 	if diffRes.stdout != "" {
+		compacted = compactDiff(diffRes.stdout, maxLines)
 		fmt.Println("\nChanges:")
-		fmt.Println(compactDiff(diffRes.stdout, maxLines))
+		fmt.Println(compacted)
 	}
 
+	// raw = stat + full diff captured; filtered = what gortk emitted.
+	trackFiltered(timer, "diff", args, res.stdout+diffRes.stdout, statOut+"\n"+compacted)
 	return 0, nil
 }
 
 // ---- run_show ---------------------------------------------------------------
 
 func runShow(args []string, maxLines, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	wantsStatOnly := false
 	wantsFormat := false
 	wantsBlobShow := false
@@ -422,12 +456,17 @@ func runShow(args []string, maxLines, verbose int, globalArgs []string) (int, er
 		}
 		if !res.success() {
 			fmt.Fprintln(os.Stderr, res.stderr)
+			trackPassthrough(timer, "show", args)
 			return res.exitCode, nil
 		}
 		if wantsBlobShow {
 			fmt.Print(res.stdout)
+			// Blob/format/stat shows are raw passthroughs of git's own output.
+			trackPassthrough(timer, "show", args)
 		} else {
-			fmt.Println(strings.TrimSpace(res.stdout))
+			out := strings.TrimSpace(res.stdout)
+			fmt.Println(out)
+			trackFiltered(timer, "show", args, res.stdout, out)
 		}
 		return 0, nil
 	}
@@ -440,9 +479,11 @@ func runShow(args []string, maxLines, verbose int, globalArgs []string) (int, er
 	}
 	if !summaryRes.success() {
 		fmt.Fprintln(os.Stderr, summaryRes.stderr)
+		trackPassthrough(timer, "show", args)
 		return summaryRes.exitCode, nil
 	}
-	fmt.Println(strings.TrimSpace(summaryRes.stdout))
+	summaryText := strings.TrimSpace(summaryRes.stdout)
+	fmt.Println(summaryText)
 
 	// Step 2: --stat summary.
 	statArgs := append([]string{"show", "--stat", "--pretty=format:"}, args...)
@@ -456,13 +497,24 @@ func runShow(args []string, maxLines, verbose int, globalArgs []string) (int, er
 	diffArgs := append([]string{"show", "--pretty=format:"}, args...)
 	diffRes := execCapture(gitCmd(globalArgs, diffArgs...))
 	diffText := strings.TrimSpace(diffRes.stdout)
+	compacted := ""
 	if diffText != "" {
+		compacted = compactDiff(diffText, maxLines)
 		if verbose > 0 {
 			fmt.Println("\nChanges:")
 		}
-		fmt.Println(compactDiff(diffText, maxLines))
+		fmt.Println(compacted)
 	}
 
+	// raw = full commit + stat + full diff; filtered = the compact emitted view.
+	filtered := summaryText
+	if statText != "" {
+		filtered += "\n" + statText
+	}
+	if compacted != "" {
+		filtered += "\n" + compacted
+	}
+	trackFiltered(timer, "show", args, summaryRes.stdout+statRes.stdout+diffRes.stdout, filtered)
 	return 0, nil
 }
 
@@ -475,6 +527,7 @@ func isBlobShowArg(arg string) bool {
 // ---- run_log ----------------------------------------------------------------
 
 func runLog(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
 	cmdArgs := []string{"log"}
 
 	hasFormatFlag := false
@@ -535,6 +588,7 @@ func runLog(args []string, verbose int, globalArgs []string) (int, error) {
 	}
 	if !res.success() {
 		fmt.Fprintln(os.Stderr, res.stderr)
+		trackPassthrough(timer, "log", args)
 		return res.exitCode, nil
 	}
 
@@ -542,7 +596,9 @@ func runLog(args []string, verbose int, globalArgs []string) (int, error) {
 		fmt.Fprintln(os.Stderr, "Git log output:")
 	}
 
-	fmt.Println(filterLogOutput(res.stdout, limit, userSetLimit, hasFormatFlag))
+	filtered := filterLogOutput(res.stdout, limit, userSetLimit, hasFormatFlag)
+	fmt.Println(filtered)
+	trackFiltered(timer, "log", args, res.stdout, filtered)
 	return 0, nil
 }
 
@@ -872,6 +928,8 @@ func filterStatusWithArgs(output string) string {
 }
 
 func runStatus(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if !usesCompactStatusPath(args) {
 		res := execCapture(gitCmd(globalArgs, buildStatusArgs(args)...))
 		if res.startErr != nil {
@@ -881,12 +939,15 @@ func runStatus(args []string, verbose int, globalArgs []string) (int, error) {
 			if strings.TrimSpace(res.stderr) != "" {
 				fmt.Fprint(os.Stderr, res.stderr)
 			}
+			trackPassthrough(timer, "status", args)
 			return res.exitCode, nil
 		}
 		if verbose > 0 || res.stderr != "" {
 			fmt.Fprint(os.Stderr, res.stderr)
 		}
-		fmt.Print(filterStatusWithArgs(res.stdout))
+		filtered := filterStatusWithArgs(res.stdout)
+		fmt.Print(filtered)
+		trackFiltered(timer, "status", args, res.stdout, filtered)
 		return 0, nil
 	}
 
@@ -901,6 +962,7 @@ func runStatus(args []string, verbose int, globalArgs []string) (int, error) {
 
 	if res.stderr != "" && strings.Contains(res.stderr, "not a git repository") {
 		fmt.Fprintln(os.Stderr, "Not a git repository")
+		trackPassthrough(timer, "status", args)
 		return res.exitCode, nil
 	}
 
@@ -917,12 +979,17 @@ func runStatus(args []string, verbose int, globalArgs []string) (int, error) {
 	}
 
 	fmt.Println(finalOutput)
+	// raw = the full plain `git status` (what an agent would otherwise read);
+	// filtered = gortk's compact one-line-per-change view.
+	trackFiltered(timer, "status", args, rawOutput, finalOutput)
 	return 0, nil
 }
 
 // ---- run_add ----------------------------------------------------------------
 
 func runAdd(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	cmdArgs := []string{"add"}
 	if len(args) == 0 {
 		cmdArgs = append(cmdArgs, ".")
@@ -958,9 +1025,12 @@ func runAdd(args []string, verbose int, globalArgs []string) (int, error) {
 		if compact != "" {
 			fmt.Println(compact)
 		}
+		// raw = the staged stat git produced; filtered = gortk's "ok …" line.
+		trackFiltered(timer, "add", args, statRes.stdout, compact)
 		return 0, nil
 	}
 
+	trackPassthrough(timer, "add", args)
 	fmt.Fprintln(os.Stderr, "FAILED: git add")
 	if strings.TrimSpace(res.stderr) != "" {
 		fmt.Fprintln(os.Stderr, res.stderr)
@@ -1002,6 +1072,8 @@ func parseCommitOutput(line string) string {
 }
 
 func runCommit(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git commit "+strings.Join(args, " "))
 	}
@@ -1026,13 +1098,18 @@ func runCommit(args []string, verbose int, globalArgs []string) (int, error) {
 			compact = parseCommitOutput(lines[0])
 		}
 		fmt.Println(compact)
+		// raw = git's full commit summary; filtered = the "ok <hash>" line.
+		trackFiltered(timer, "commit", args, stdout+stderr, compact)
 		return 0, nil
 	}
 
 	if strings.Contains(stderr, "nothing to commit") || strings.Contains(stdout, "nothing to commit") {
 		fmt.Println("ok (nothing to commit)")
+		trackFiltered(timer, "commit", args, stdout+stderr, "ok (nothing to commit)")
 		return 0, nil
 	}
+
+	trackPassthrough(timer, "commit", args)
 
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
@@ -1115,6 +1192,8 @@ func filterPushOutput(raw string, exitCode int) string {
 }
 
 func runPush(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git push")
 	}
@@ -1126,14 +1205,18 @@ func runPush(args []string, verbose int, globalArgs []string) (int, error) {
 	}
 
 	// git push writes progress + ref updates to stderr.
-	filtered := filterPushOutput(res.combined(), res.exitCode)
+	raw := res.combined()
+	filtered := filterPushOutput(raw, res.exitCode)
 	fmt.Print(filtered)
+	trackFiltered(timer, "push", args, raw, filtered)
 	return res.exitCode, nil
 }
 
 // ---- run_pull ---------------------------------------------------------------
 
 func runPull(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git pull")
 	}
@@ -1172,9 +1255,12 @@ func runPull(args []string, verbose int, globalArgs []string) (int, error) {
 			}
 		}
 		fmt.Println(compact)
+		// raw = git pull's full merge/fast-forward report; filtered = "ok …".
+		trackFiltered(timer, "pull", args, res.combined(), compact)
 		return 0, nil
 	}
 
+	trackPassthrough(timer, "pull", args)
 	fmt.Fprintln(os.Stderr, "FAILED: git pull")
 	if strings.TrimSpace(res.stderr) != "" {
 		fmt.Fprintln(os.Stderr, res.stderr)
@@ -1202,6 +1288,8 @@ func firstInt(s string) int {
 // ---- run_branch -------------------------------------------------------------
 
 func runBranch(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git branch")
 	}
@@ -1240,8 +1328,11 @@ func runBranch(args []string, verbose int, globalArgs []string) (int, error) {
 		}
 		if res.success() {
 			fmt.Println(strings.TrimSpace(res.stdout))
+			// --show-current prints git's raw single-line output unfiltered.
+			trackPassthrough(timer, "branch", args)
 			return 0, nil
 		}
+		trackPassthrough(timer, "branch", args)
 		fmt.Fprintln(os.Stderr, "FAILED: git branch "+strings.Join(args, " "))
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1258,8 +1349,11 @@ func runBranch(args []string, verbose int, globalArgs []string) (int, error) {
 		}
 		if res.success() {
 			fmt.Println("ok")
+			// raw = git's branch-write output (usually empty); filtered = "ok".
+			trackFiltered(timer, "branch", args, res.combined(), "ok")
 			return 0, nil
 		}
+		trackPassthrough(timer, "branch", args)
 		fmt.Fprintln(os.Stderr, "FAILED: git branch "+strings.Join(args, " "))
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1286,10 +1380,13 @@ func runBranch(args []string, verbose int, globalArgs []string) (int, error) {
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprint(os.Stderr, res.stderr)
 		}
+		trackPassthrough(timer, "branch", args)
 		return res.exitCode, nil
 	}
 
-	fmt.Println(filterBranchOutput(res.stdout))
+	filtered := filterBranchOutput(res.stdout)
+	fmt.Println(filtered)
+	trackFiltered(timer, "branch", args, res.stdout, filtered)
 	return 0, nil
 }
 
@@ -1365,6 +1462,8 @@ func contains(xs []string, v string) bool {
 // ---- run_fetch --------------------------------------------------------------
 
 func runFetch(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git fetch")
 	}
@@ -1376,6 +1475,7 @@ func runFetch(args []string, verbose int, globalArgs []string) (int, error) {
 	}
 
 	if !res.success() {
+		trackPassthrough(timer, "fetch", args)
 		fmt.Fprintln(os.Stderr, "FAILED: git fetch")
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1396,6 +1496,8 @@ func runFetch(args []string, verbose int, globalArgs []string) (int, error) {
 		msg = fmt.Sprintf("ok fetched (%d new refs)", newRefs)
 	}
 	fmt.Println(msg)
+	// raw = git fetch's full ref report on stderr; filtered = "ok fetched …".
+	trackFiltered(timer, "fetch", args, res.combined(), msg)
 	return 0, nil
 }
 
@@ -1415,6 +1517,8 @@ func formatStashMessage(subcommand string, combined string) string {
 }
 
 func runStash(subcommand *string, args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		if subcommand != nil {
 			fmt.Fprintf(os.Stderr, "git stash %q\n", *subcommand)
@@ -1428,6 +1532,16 @@ func runStash(subcommand *string, args []string, verbose int, globalArgs []strin
 		sub = *subcommand
 	}
 
+	// stashArgs reconstructs the "stash <sub> <args>" token list for tracking
+	// labels (runStash receives the stash subcommand stripped from args).
+	stashArgs := func() []string {
+		out := []string{}
+		if sub != "" {
+			out = append(out, sub)
+		}
+		return append(out, args...)
+	}()
+
 	switch sub {
 	case "list":
 		res := execCapture(gitCmd(globalArgs, "stash", "list"))
@@ -1436,9 +1550,12 @@ func runStash(subcommand *string, args []string, verbose int, globalArgs []strin
 		}
 		if strings.TrimSpace(res.stdout) == "" {
 			fmt.Println("No stashes")
+			trackFiltered(timer, "stash", stashArgs, res.stdout, "No stashes")
 			return 0, nil
 		}
-		fmt.Println(filterStashList(res.stdout))
+		filtered := filterStashList(res.stdout)
+		fmt.Println(filtered)
+		trackFiltered(timer, "stash", stashArgs, res.stdout, filtered)
 		return 0, nil
 
 	case "show":
@@ -1447,11 +1564,14 @@ func runStash(subcommand *string, args []string, verbose int, globalArgs []strin
 		if res.startErr != nil {
 			return 127, fmt.Errorf("gortk: failed to run git: %w", res.startErr)
 		}
+		var filtered string
 		if strings.TrimSpace(res.stdout) == "" {
-			fmt.Println("Empty stash")
+			filtered = "Empty stash"
 		} else {
-			fmt.Println(compactDiff(res.stdout, 100))
+			filtered = compactDiff(res.stdout, 100)
 		}
+		fmt.Println(filtered)
+		trackFiltered(timer, "stash", stashArgs, res.stdout, filtered)
 		return 0, nil
 
 	case "apply", "branch", "clear", "create", "drop", "export", "import", "pop", "store":
@@ -1461,9 +1581,12 @@ func runStash(subcommand *string, args []string, verbose int, globalArgs []strin
 			return 127, fmt.Errorf("gortk: failed to run git: %w", res.startErr)
 		}
 		if res.success() {
-			fmt.Println(formatStashMessage(sub, res.combined()))
+			msg := formatStashMessage(sub, res.combined())
+			fmt.Println(msg)
+			trackFiltered(timer, "stash", stashArgs, res.combined(), msg)
 			return 0, nil
 		}
+		trackPassthrough(timer, "stash", stashArgs)
 		fmt.Fprintln(os.Stderr, "FAILED: git stash "+sub)
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1495,9 +1618,12 @@ func runStash(subcommand *string, args []string, verbose int, globalArgs []strin
 			return 127, fmt.Errorf("gortk: failed to run git: %w", res.startErr)
 		}
 		if res.success() {
-			fmt.Println(formatStashMessage(sub, res.combined()))
+			msg := formatStashMessage(sub, res.combined())
+			fmt.Println(msg)
+			trackFiltered(timer, "stash", stashArgs, res.combined(), msg)
 			return 0, nil
 		}
+		trackPassthrough(timer, "stash", stashArgs)
 		fmt.Fprintln(os.Stderr, "FAILED: git stash "+gitSub)
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1529,6 +1655,8 @@ func filterStashList(output string) string {
 // ---- run_worktree -----------------------------------------------------------
 
 func runWorktree(args []string, verbose int, globalArgs []string) (int, error) {
+	timer := core.StartTimer()
+
 	if verbose > 0 {
 		fmt.Fprintln(os.Stderr, "git worktree list")
 	}
@@ -1549,8 +1677,10 @@ func runWorktree(args []string, verbose int, globalArgs []string) (int, error) {
 		}
 		if res.success() {
 			fmt.Println("ok")
+			trackFiltered(timer, "worktree", args, res.combined(), "ok")
 			return 0, nil
 		}
+		trackPassthrough(timer, "worktree", args)
 		fmt.Fprintln(os.Stderr, "FAILED: git worktree "+strings.Join(args, " "))
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprintln(os.Stderr, res.stderr)
@@ -1562,7 +1692,9 @@ func runWorktree(args []string, verbose int, globalArgs []string) (int, error) {
 	if res.startErr != nil {
 		return 127, fmt.Errorf("gortk: failed to run git: %w", res.startErr)
 	}
-	fmt.Println(filterWorktreeList(res.stdout))
+	filtered := filterWorktreeList(res.stdout)
+	fmt.Println(filtered)
+	trackFiltered(timer, "worktree", args, res.stdout, filtered)
 	return 0, nil
 }
 

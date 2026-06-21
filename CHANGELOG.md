@@ -49,16 +49,20 @@ wraps a native tool, captures its output, and compresses it before printing.
   `pip`, `playwright`.
 - **Cloud / containers:** `aws`, `docker`/`kubectl`/`oc`, `curl`, `wget`, `psql`.
 - **Generic exec:** `err`, `test`, `proxy`, `run`, `summary`, `pipe`.
-- **Hooks / integration:** `rewrite`; `hook` for **Claude Code** (PreToolUse) and
-  **GitHub Copilot** (`hook copilot` auto-detects VS Code Copilot Chat
-  `updatedInput` and Copilot CLI `modifiedArgs`); `init` (global Windows-native
-  Claude installer) and `init --copilot` (project-scoped `.github/` installer
-  writing `hooks/gortk-rewrite.json` + `copilot-instructions.md`); all with
-  `--show`/`--dry-run`. Compound commands (`&&`/`||`/`;`/`|`) are rewritten
-  per-segment; unattestable constructs (substitutions, heredocs, file redirects)
-  pass through.
-- **Operational:** `config`, `gain` (token-savings report from the JSON tracker),
-  `verify` (runs all 58 builtin filters' inline tests — 144/144 pass).
+- **Hooks / integration:** `rewrite`; `hook` for **Claude**, **Copilot** (VS Code
+  `updatedInput` + CLI `modifiedArgs`), **Codex** (`updatedInput` + auto-allow),
+  **Gemini** (BeforeTool), and **Cursor**; installers `init` (global Claude),
+  `init --copilot` / `init --copilot --global`, `init --codex`, and
+  `init --agent <cursor|windsurf|cline|kilocode|antigravity|pi|hermes|opencode>`;
+  all with `--show`/`--dry-run`. Compound commands (`&&`/`||`/`;`/`|`) are
+  rewritten per-segment; unattestable constructs (substitutions, heredocs, file
+  redirects) pass through.
+- **Operational:** `config`, `gain` (token-savings tally — now counts `git`/`grep`
+  too), `verify` (all 58 builtin filters' inline tests — 144/144 pass),
+  `telemetry` (opt-in; see below).
+- **Analytics (scan Claude Code history):** `discover` (commands gortk could have
+  optimized), `learn` (recurring CLI corrections), `session` (gortk adoption),
+  `cc-economics` (Claude spend vs gortk savings).
 
 Anything without a dedicated module is handled by the declarative TOML filter
 engine (58 builtin filters) and otherwise passed through unchanged.
@@ -69,11 +73,17 @@ engine (58 builtin filters) and otherwise passed through unchanged.
   wiring gortk into Claude Code, Codex, and Copilot across machines: the full
   command list, per-agent setup + validation, and the instruction block that
   stops agents bypassing the optimizer via their built-in `Read`/`Grep`/`Glob`
-  tools. Codex is instruction-only (no rewrite hook exists); Claude and Copilot
-  have native hooks.
+  tools. **Claude, Copilot, Codex, Gemini, and Cursor** have native rewrite hooks;
+  Windsurf/Cline/Kilocode/Antigravity/Pi/Hermes/OpenCode wire in via
+  `init --agent`.
 
-### Removed vs rtk (intentional)
+### Removed / changed vs rtk (intentional)
 
-- Telemetry / usage ping (`core/telemetry.rs`) — omitted entirely.
+- **Vendor telemetry phone-home — removed.** Replaced with **opt-in,
+  enterprise-configurable** telemetry: off by default, no compile-time URL.
+  `gortk telemetry enable --endpoint <your-sink> [--token …]` posts aggregate-only
+  stats (device hash, version, OS/arch, command + token-savings counts — never
+  command strings, paths, or secrets) to YOUR endpoint; `gortk telemetry preview`
+  shows the exact payload without sending.
 - Bundled SQLite tracking — replaced with JSON-lines.
 - curl-based release installer (`install.sh`) — gortk builds from source.

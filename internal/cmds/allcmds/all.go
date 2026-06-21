@@ -4,14 +4,19 @@
 // This file is the single place that lists command packages; regenerate it as
 // new command modules are added. Keeping registration here (rather than in main)
 // means command packages never need to know about each other.
+//
+// (cchistory is a shared library used by the analytics commands and registers no
+// command, so it is intentionally not listed here.)
 package allcmds
 
 import (
 	_ "gortk/internal/cmds/aws"
 	_ "gortk/internal/cmds/cargo"
+	_ "gortk/internal/cmds/cceconomics"
 	_ "gortk/internal/cmds/container"
 	_ "gortk/internal/cmds/curl"
 	_ "gortk/internal/cmds/deps"
+	_ "gortk/internal/cmds/discover"
 	_ "gortk/internal/cmds/dotnet"
 	_ "gortk/internal/cmds/envcmd"
 	_ "gortk/internal/cmds/execwrap"
@@ -27,6 +32,7 @@ import (
 	_ "gortk/internal/cmds/gt"
 	_ "gortk/internal/cmds/hooks"
 	_ "gortk/internal/cmds/jsoncmd"
+	_ "gortk/internal/cmds/learn"
 	_ "gortk/internal/cmds/lint"
 	_ "gortk/internal/cmds/logcmd"
 	_ "gortk/internal/cmds/ls"
@@ -48,8 +54,10 @@ import (
 	_ "gortk/internal/cmds/rspec"
 	_ "gortk/internal/cmds/rubocop"
 	_ "gortk/internal/cmds/ruff"
+	_ "gortk/internal/cmds/session"
 	_ "gortk/internal/cmds/smart"
 	_ "gortk/internal/cmds/summary"
+	_ "gortk/internal/cmds/telemetry"
 	_ "gortk/internal/cmds/tree"
 	_ "gortk/internal/cmds/tsc"
 	_ "gortk/internal/cmds/vitest"

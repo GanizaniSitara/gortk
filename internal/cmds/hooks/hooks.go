@@ -68,12 +68,12 @@ func init() {
 	})
 	registry.Register(&registry.Cmd{
 		Name:    "hook",
-		Summary: "Agent hook processors (subcommands: claude, copilot, codex) — reads JSON from stdin",
+		Summary: "Agent hook processors (subcommands: claude, copilot, codex, gemini, cursor) — reads JSON from stdin",
 		Run:     RunHook,
 	})
 	registry.Register(&registry.Cmd{
 		Name:    "init",
-		Summary: "Install the gortk PreToolUse hook into Claude Code / Copilot / Codex (--copilot, --codex, --show, --dry-run)",
+		Summary: "Install the gortk hook into an agent (--copilot, --codex, --agent <name>, --show, --dry-run)",
 		Run:     RunInit,
 	})
 }
@@ -811,10 +811,12 @@ func RunRewrite(args []string, verbose int) (int, error) {
 // RunHook dispatches the `hook` subcommands. "claude" handles the Claude Code
 // PreToolUse hook; "copilot" handles the GitHub Copilot preToolUse hook (VS Code
 // Copilot Chat + Copilot CLI, auto-detected); "codex" handles the OpenAI Codex
-// CLI PreToolUse hook. Other agents are out of scope for this Windows port.
+// CLI PreToolUse hook; "gemini" handles the Google Gemini CLI BeforeTool hook;
+// "cursor" handles the Cursor Agent preToolUse hook.
 func RunHook(args []string, verbose int) (int, error) {
+	const expected = "claude, copilot, codex, gemini, or cursor"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gortk hook: missing subcommand (expected: claude, copilot, or codex)")
+		fmt.Fprintln(os.Stderr, "gortk hook: missing subcommand (expected: "+expected+")")
 		return 2, nil
 	}
 	switch args[0] {
@@ -824,8 +826,12 @@ func RunHook(args []string, verbose int) (int, error) {
 		return runHookCopilot(os.Stdin, os.Stdout, gortkSupports)
 	case "codex":
 		return runHookCodex(os.Stdin, os.Stdout, gortkSupports)
+	case "gemini":
+		return runHookGemini(os.Stdin, os.Stdout, gortkSupports)
+	case "cursor":
+		return runHookCursor(os.Stdin, os.Stdout, gortkSupports)
 	default:
-		fmt.Fprintf(os.Stderr, "gortk hook: unknown subcommand %q (expected: claude, copilot, or codex)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gortk hook: unknown subcommand %q (expected: %s)\n", args[0], expected)
 		return 2, nil
 	}
 }

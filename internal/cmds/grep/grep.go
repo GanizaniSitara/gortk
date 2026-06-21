@@ -95,15 +95,28 @@ func startErr(err error) error {
 	return err
 }
 
+// grepCommandLabel builds the "grep <args>" command string for tracking.
+func grepCommandLabel(args []string) string {
+	if len(args) == 0 {
+		return "grep"
+	}
+	return "grep " + strings.Join(args, " ")
+}
+
 // Run dispatches the gortk `grep` command. args are the tokens after "grep";
 // verbose is the -v count. It returns the process exit code.
 func Run(args []string, verbose int) (int, error) {
+	timer := core.StartTimer()
+
 	// --version / --help / -h: pass through to rg without filtering. rtk handles
 	// this before any other parsing; we do the same so e.g. `gortk grep --help`
 	// shows rg's help verbatim.
 	for _, a := range args {
 		if a == "--version" || a == "--help" || a == "-h" {
-			return runVersionHelp(args)
+			code, err := runVersionHelp(args)
+			// --version/--help echo rg's output verbatim (no compaction).
+			timer.TrackPassthrough(grepCommandLabel(args), "gortk grep")
+			return code, err
 		}
 	}
 
@@ -143,6 +156,7 @@ func Run(args []string, verbose int) (int, error) {
 		if strings.TrimSpace(res.stderr) != "" {
 			fmt.Fprint(os.Stderr, strings.TrimSpace(res.stderr))
 		}
+		timer.TrackPassthrough(grepCommandLabel(args), "gortk grep")
 		return res.exitCode, nil
 	}
 
@@ -154,14 +168,20 @@ func Run(args []string, verbose int) (int, error) {
 				fmt.Fprintln(os.Stderr, strings.TrimSpace(res.stderr))
 			}
 			fmt.Fprintf(os.Stderr, "grep failed with exit code %d\n", exitCode)
+			timer.TrackPassthrough(grepCommandLabel(args), "gortk grep")
 			return exitCode, nil
 		}
-		fmt.Printf("0 matches for '%s'\n", patternDisplay)
+		noMatch := fmt.Sprintf("0 matches for '%s'\n", patternDisplay)
+		fmt.Print(noMatch)
+		// raw = empty rg/grep output; filtered = the "0 matches" line.
+		timer.Track(grepCommandLabel(args), "gortk grep", res.stdout, noMatch)
 		return exitCode, nil
 	}
 
 	output := compactMatches(res.stdout, maxLineLen, maxResults, contextOnly, patternDisplay)
 	fmt.Print(output)
+	// raw = full rg/grep match output; filtered = gortk's compacted report.
+	timer.Track(grepCommandLabel(args), "gortk grep", res.stdout, output)
 	return exitCode, nil
 }
 
