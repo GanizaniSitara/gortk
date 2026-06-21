@@ -786,6 +786,10 @@ func TestMergeTestSummaryFromTRXOverridesSmallerExistingCounts(t *testing.T) {
 
 func TestMergeTestSummaryFromTRXUsesLargerProjectCount(t *testing.T) {
 	dir := t.TempDir()
+	// commandStartedAt must precede the .trx files: in production the command
+	// starts, then the run writes the .trx. Passing time.Now() AFTER writing
+	// races the filesystem mtime granularity on Windows and can exclude them.
+	startedAt := time.Now().Add(-time.Second)
 	if err := os.WriteFile(filepath.Join(dir, "a.trx"), []byte(trxWithCounts(2, 2, 0)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -793,7 +797,7 @@ func TestMergeTestSummaryFromTRXUsesLargerProjectCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	existing := TestSummary{Passed: 5, Total: 5, ProjectCount: 1, DurationText: "1 s", HasDuration: true}
-	merged := mergeTestSummaryFromTRX(existing, dir, time.Now())
+	merged := mergeTestSummaryFromTRX(existing, dir, startedAt)
 	if merged.ProjectCount != 2 {
 		t.Errorf("expected project count 2, got %d", merged.ProjectCount)
 	}

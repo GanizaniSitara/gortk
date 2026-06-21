@@ -67,21 +67,27 @@ type installPlan struct {
 	settingsErr    string // non-empty if settings.json exists but failed to parse
 }
 
-// RunInit implements `gortk init [--copilot [--global] | --codex] [--show] [--dry-run]`.
+// RunInit implements
+// `gortk init [--copilot [--global] | --codex | --agent <name>] [--show] [--dry-run]`.
 // With no target flag it installs the global Claude Code hook (the original
 // behaviour, unchanged). With --copilot it routes to the project-scoped GitHub
 // Copilot installer (writes into ./.github of the current directory); adding
 // --global instead performs a USER-LEVEL Copilot install that wires gortk into
 // the Copilot CLI once per user, covering all repos (writes into the user's
 // Copilot settings.json). With --codex it performs a USER-LEVEL OpenAI Codex CLI
-// install (writes ~/.codex/hooks.json), covering all repos.
+// install (writes ~/.codex/hooks.json), covering all repos. With
+// --agent <name> it routes to one of the additional agent installers
+// (cursor, windsurf, cline, kilocode, antigravity, pi, hermes, opencode) — see
+// init_agents.go.
 func RunInit(args []string, verbose int) (int, error) {
 	show := false
 	dryRun := false
 	copilot := false
 	codex := false
 	global := false
-	for _, a := range args {
+	agent := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--copilot":
 			copilot = true
@@ -89,6 +95,15 @@ func RunInit(args []string, verbose int) (int, error) {
 			codex = true
 		case "--global":
 			global = true
+		case "--agent":
+			// `--agent <name>`: consume the following token as the agent name.
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "gortk init: --agent requires an agent name")
+				printInitUsage()
+				return 2, nil
+			}
+			i++
+			agent = args[i]
 		case "--show":
 			show = true
 		case "--dry-run":
@@ -97,14 +112,30 @@ func RunInit(args []string, verbose int) (int, error) {
 			printInitUsage()
 			return 0, nil
 		default:
+			// Tolerate `--agent=<name>` as well as the space-separated form.
+			if name, ok := strings.CutPrefix(a, "--agent="); ok {
+				agent = name
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "gortk init: unknown flag %q\n", a)
 			printInitUsage()
 			return 2, nil
 		}
 	}
 
-	if copilot && codex {
-		fmt.Fprintln(os.Stderr, "gortk init: --copilot and --codex are mutually exclusive")
+	// Target selection is mutually exclusive across --copilot / --codex / --agent.
+	targets := 0
+	if copilot {
+		targets++
+	}
+	if codex {
+		targets++
+	}
+	if agent != "" {
+		targets++
+	}
+	if targets > 1 {
+		fmt.Fprintln(os.Stderr, "gortk init: choose at most one of --copilot, --codex, --agent")
 		printInitUsage()
 		return 2, nil
 	}
@@ -113,6 +144,10 @@ func RunInit(args []string, verbose int) (int, error) {
 		fmt.Fprintln(os.Stderr, "gortk init: --global is only valid together with --copilot")
 		printInitUsage()
 		return 2, nil
+	}
+
+	if agent != "" {
+		return runAgentInit(agent, show, dryRun, verbose)
 	}
 
 	if codex {
@@ -399,11 +434,12 @@ func existsLabel(b bool, yes, no string) string {
 }
 
 func printInitUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: gortk init [--copilot [--global] | --codex] [--show] [--dry-run]")
+	fmt.Fprintln(os.Stderr, "Usage: gortk init [--copilot [--global] | --codex | --agent <name>] [--show] [--dry-run]")
 	fmt.Fprintln(os.Stderr, "  Installs the gortk PreToolUse hook into Claude Code (~/.claude).")
 	fmt.Fprintln(os.Stderr, "  --copilot           install the project-scoped GitHub Copilot hook into ./.github instead")
 	fmt.Fprintln(os.Stderr, "  --copilot --global  install the user-level Copilot CLI hook for ALL repos (~/.copilot/settings.json)")
 	fmt.Fprintln(os.Stderr, "  --codex             install the user-level OpenAI Codex CLI hook for ALL repos (~/.codex/hooks.json)")
+	fmt.Fprintln(os.Stderr, "  --agent <name>      install for another agent: "+strings.Join(agentNames(), ", "))
 	fmt.Fprintln(os.Stderr, "  --show              print resolved paths and current state; write nothing")
 	fmt.Fprintln(os.Stderr, "  --dry-run           print the changes that would be made; write nothing")
 }

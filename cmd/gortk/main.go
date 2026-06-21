@@ -24,6 +24,11 @@ func main() {
 }
 
 func run(argv []string) int {
+	// Optional, opt-in telemetry ping. No-op unless the operator has explicitly
+	// enabled it and configured their own sink endpoint (off by default; no
+	// vendor phone-home). Fire-and-forget, never blocks the CLI.
+	core.MaybePing(core.LoadConfig())
+
 	// Strip leading global flags (-v/-vv/-vvv, --version, --help) before the
 	// subcommand. Anything after the subcommand belongs to that command.
 	verbose := 0
